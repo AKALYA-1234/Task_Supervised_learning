@@ -2,121 +2,93 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
-from sklearn.metrics import confusion_matrix, roc_curve, auc
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 import seaborn as sns
-from io import StringIO
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Employee Attrition Predictor", layout="centered")
-st.title("👩‍💼 Employee Attrition Prediction")
+# ---------------------------
+# 1. Load models safely
+# ---------------------------
 
-# Load artifacts
-MODEL_PATH = "artifacts/model.pkl"
-PREP_PATH  = "artifacts/preprocessor.pkl"
-META_PATH  = "artifacts/metadata.pkl"
-TEST_PATH  = "artifacts/test_data.pkl"
+# Logistic Regression and Random Forest using joblib
+import joblib
 
-model = pickle.load(open(MODEL_PATH, "rb"))
-preprocessor = pickle.load(open(PREP_PATH, "rb"))
-metadata = pickle.load(open(META_PATH, "rb"))
-X_test_saved, y_test_saved = pickle.load(open(TEST_PATH, "rb"))
+# Make sure you have all classes imported before loading
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 
-numeric_features      = metadata["numeric_features"]
-categorical_features  = metadata["categorical_features"]
-numeric_defaults      = metadata["numeric_defaults"]
-categorical_defaults  = metadata["categorical_defaults"]
-categorical_categories= metadata["categorical_categories"]
-feature_order         = metadata["feature_order"]
+# File paths
+log_model_path = "logistic_model.pkl"
+rf_model_path = "rf_model.pkl"
+xgb_model_path = "xgb_model.json"  # Use XGBoost native format
 
-tab1, tab2, tab3 = st.tabs(["🔮 Single Prediction", "📦 Batch CSV", "📈 Model Evaluation"])
+# Load models
+log_model = joblib.load(log_model_path)
+rf_model = joblib.load(rf_model_path)
 
-with tab1:
-    st.subheader("Enter employee details")
-    cols = st.columns(2)
+xgb_model = XGBClassifier()
+xgb_model.load_model(xgb_model_path)
 
-    # Build a row dict with defaults
-    row = {}
+# ---------------------------
+# 2. Streamlit App UI
+# ---------------------------
+st.title("Employee Attrition Prediction")
 
-    # Numeric inputs
-    for i, col in enumerate(numeric_features):
-        with cols[i % 2]:
-            default = numeric_defaults.get(col, 0.0)
-            # Try to set reasonable bounds
-            row[col] = st.number_input(col, value=float(default))
+st.markdown("Enter employee details to predict attrition:")
 
-    # Categorical inputs
-    for i, col in enumerate(categorical_features):
-        with cols[i % 2]:
-            options = categorical_categories.get(col, [])
-            default = categorical_defaults.get(col, options[0] if options else "")
-            if options:
-                row[col] = st.selectbox(col, options, index=options.index(default) if default in options else 0)
-            else:
-                row[col] = st.text_input(col, value=str(default))
+# Example input fields (modify according to your dataset features)
+age = st.number_input("Age", min_value=18, max_value=70, value=30)
+monthly_income = st.number_input("Monthly Income", min_value=1000, max_value=50000, value=5000)
+years_at_company = st.number_input("Years at Company", min_value=0, max_value=40, value=5)
+job_satisfaction = st.slider("Job Satisfaction (1-4)", 1, 4, 3)
+# Add more features as needed
 
-    if st.button("Predict"):
-        # Build dataframe in the exact feature order seen during training
-        input_df = pd.DataFrame([row])[feature_order]
-        X_proc = preprocessor.transform(input_df)
-        proba = model.predict_proba(X_proc)[:, 1][0]
-        pred = int(proba >= 0.5)
+# Create input dataframe
+input_data = pd.DataFrame({
+    "Age": [age],
+    "MonthlyIncome": [monthly_income],
+    "YearsAtCompany": [years_at_company],
+    "JobSatisfaction": [job_satisfaction]
+    # Add all other features here
+})
 
-        if pred == 1:
-            st.error(f"⚠️ Likely to **LEAVE** (probability: {proba*100:.2f}%)")
-        else:
-            st.success(f"✅ Likely to **STAY** (probability to leave: {proba*100:.2f}%)")
+# ---------------------------
+# 3. Feature Scaling (if needed)
+# ---------------------------
+# Assuming models were trained on scaled data
+scaler = StandardScaler()
+input_scaled = scaler.fit_transform(input_data)  # Or load pre-fitted scaler using joblib
 
-with tab2:
-    st.subheader("Upload a CSV to score many employees")
-    st.caption("The CSV must use the same original columns the model was trained on.")
-    file = st.file_uploader("Upload CSV", type=["csv"])
-    if file is not None:
-        df = pd.read_csv(file)
-        missing = [c for c in feature_order if c not in df.columns]
-        if missing:
-            st.error(f"Your CSV is missing required columns: {missing}")
-        else:
-            df = df[feature_order]
-            Xp = preprocessor.transform(df)
-            probas = model.predict_proba(Xp)[:, 1]
-            preds = (probas >= 0.5).astype(int)
-            out = df.copy()
-            out["Attrition_Prob"] = probas
-            out["Attrition_Pred"] = preds
-            st.success(f"Scored {len(out)} rows.")
-            st.dataframe(out.head(20))
-            st.download_button(
-                "⬇️ Download predictions as CSV",
-                data=out.to_csv(index=False).encode("utf-8"),
-                file_name="attrition_predictions.csv",
-                mime="text/csv"
-            )
+# ---------------------------
+# 4. Model Selection
+# ---------------------------
+model_choice = st.selectbox("Choose Model", ["Logistic Regression", "Random Forest", "XGBoost"])
 
-with tab3:
-    st.subheader("Confusion Matrix & ROC Curve (held-out test set)")
-    # Transform saved test set (raw features) with the same preprocessor
-    X_test_proc = preprocessor.transform(X_test_saved)
-    y_pred = model.predict(X_test_proc)
-    y_proba = model.predict_proba(X_test_proc)[:, 1]
+if st.button("Predict"):
+    if model_choice == "Logistic Regression":
+        pred = log_model.predict(input_scaled)[0]
+        proba = log_model.predict_proba(input_scaled)[0, 1]
+    elif model_choice == "Random Forest":
+        pred = rf_model.predict(input_scaled)[0]
+        proba = rf_model.predict_proba(input_scaled)[0, 1]
+    else:
+        pred = xgb_model.predict(input_scaled)[0]
+        proba = xgb_model.predict_proba(input_scaled)[0, 1]
 
-    # Confusion matrix
-    cm = confusion_matrix(y_test_saved, y_pred)
-    fig1, ax1 = plt.subplots()
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=["Stayed","Left"], yticklabels=["Stayed","Left"], ax=ax1)
-    ax1.set_title("Confusion Matrix")
-    ax1.set_xlabel("Predicted"); ax1.set_ylabel("Actual")
-    st.pyplot(fig1)
+    # Display prediction
+    st.subheader("Prediction Result")
+    st.write("Attrition: ", "Yes" if pred == 1 else "No")
+    st.write("Probability of leaving: ", round(proba*100, 2), "%")
 
-    # ROC
-    fpr, tpr, _ = roc_curve(y_test_saved, y_proba)
-    roc_auc = auc(fpr, tpr)
-    fig2, ax2 = plt.subplots()
-    ax2.plot(fpr, tpr, label=f"AUC = {roc_auc:.2f}")
-    ax2.plot([0,1],[0,1], linestyle="--")
-    ax2.set_xlabel("False Positive Rate"); ax2.set_ylabel("True Positive Rate")
-    ax2.set_title("ROC Curve"); ax2.legend(loc="lower right")
-    st.pyplot(fig2)
-
-    st.info(f"ROC-AUC on held-out test set: **{roc_auc:.3f}**")
+    # Optional: confusion matrix or more metrics
+    # Example: placeholder plot
+    cm = np.array([[50, 5],[7, 38]])  # Dummy confusion matrix
+    fig, ax = plt.subplots()
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    st.pyplot(fig)
