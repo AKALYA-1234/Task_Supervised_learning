@@ -1,48 +1,58 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
 import pickle
 from sklearn.metrics import confusion_matrix, roc_curve, auc
 import matplotlib.pyplot as plt
 import seaborn as sns
-from io import StringIO
 
+# Page config
 st.set_page_config(page_title="Employee Attrition Predictor", layout="centered")
 st.title("👩‍💼 Employee Attrition Prediction")
 
-# Load artifacts
+# -------------------------------
+# Load saved artifacts
+# -------------------------------
 MODEL_PATH = "artifacts/model.pkl"
 PREP_PATH  = "artifacts/preprocessor.pkl"
 META_PATH  = "artifacts/metadata.pkl"
 TEST_PATH  = "artifacts/test_data.pkl"
 
-model = pickle.load(open(MODEL_PATH, "rb"))
-preprocessor = pickle.load(open(PREP_PATH, "rb"))
-metadata = pickle.load(open(META_PATH, "rb"))
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
+
+with open(PREP_PATH, "rb") as f:
+    preprocessor = pickle.load(f)
+
+with open(META_PATH, "rb") as f:
+    metadata = pickle.load(f)
+
 X_test_saved, y_test_saved = pickle.load(open(TEST_PATH, "rb"))
 
-numeric_features      = metadata["numeric_features"]
-categorical_features  = metadata["categorical_features"]
-numeric_defaults      = metadata["numeric_defaults"]
-categorical_defaults  = metadata["categorical_defaults"]
-categorical_categories= metadata["categorical_categories"]
-feature_order         = metadata["feature_order"]
+numeric_features       = metadata["numeric_features"]
+categorical_features   = metadata["categorical_features"]
+numeric_defaults       = metadata["numeric_defaults"]
+categorical_defaults   = metadata["categorical_defaults"]
+categorical_categories = metadata["categorical_categories"]
+feature_order          = metadata["feature_order"]
 
+# -------------------------------
+# Tabs
+# -------------------------------
 tab1, tab2, tab3 = st.tabs(["🔮 Single Prediction", "📦 Batch CSV", "📈 Model Evaluation"])
 
+# -------------------------------
+# Tab 1: Single Prediction
+# -------------------------------
 with tab1:
     st.subheader("Enter employee details")
     cols = st.columns(2)
-
-    # Build a row dict with defaults
     row = {}
 
     # Numeric inputs
     for i, col in enumerate(numeric_features):
         with cols[i % 2]:
             default = numeric_defaults.get(col, 0.0)
-            # Try to set reasonable bounds
             row[col] = st.number_input(col, value=float(default))
 
     # Categorical inputs
@@ -56,7 +66,6 @@ with tab1:
                 row[col] = st.text_input(col, value=str(default))
 
     if st.button("Predict"):
-        # Build dataframe in the exact feature order seen during training
         input_df = pd.DataFrame([row])[feature_order]
         X_proc = preprocessor.transform(input_df)
         proba = model.predict_proba(X_proc)[:, 1][0]
@@ -67,15 +76,17 @@ with tab1:
         else:
             st.success(f"✅ Likely to **STAY** (probability to leave: {proba*100:.2f}%)")
 
+# -------------------------------
+# Tab 2: Batch CSV Prediction
+# -------------------------------
 with tab2:
     st.subheader("Upload a CSV to score many employees")
-    st.caption("The CSV must use the same original columns the model was trained on.")
     file = st.file_uploader("Upload CSV", type=["csv"])
     if file is not None:
         df = pd.read_csv(file)
         missing = [c for c in feature_order if c not in df.columns]
         if missing:
-            st.error(f"Your CSV is missing required columns: {missing}")
+            st.error(f"Missing columns: {missing}")
         else:
             df = df[feature_order]
             Xp = preprocessor.transform(df)
@@ -84,7 +95,8 @@ with tab2:
             out = df.copy()
             out["Attrition_Prob"] = probas
             out["Attrition_Pred"] = preds
-            st.success(f"Scored {len(out)} rows.")
+
+            st.success(f"Scored {len(out)} rows")
             st.dataframe(out.head(20))
             st.download_button(
                 "⬇️ Download predictions as CSV",
@@ -93,9 +105,11 @@ with tab2:
                 mime="text/csv"
             )
 
+# -------------------------------
+# Tab 3: Model Evaluation
+# -------------------------------
 with tab3:
-    st.subheader("Confusion Matrix & ROC Curve (held-out test set)")
-    # Transform saved test set (raw features) with the same preprocessor
+    st.subheader("Confusion Matrix & ROC Curve (Test Set)")
     X_test_proc = preprocessor.transform(X_test_saved)
     y_pred = model.predict(X_test_proc)
     y_proba = model.predict_proba(X_test_proc)[:, 1]
@@ -109,7 +123,7 @@ with tab3:
     ax1.set_xlabel("Predicted"); ax1.set_ylabel("Actual")
     st.pyplot(fig1)
 
-    # ROC
+    # ROC curve
     fpr, tpr, _ = roc_curve(y_test_saved, y_proba)
     roc_auc = auc(fpr, tpr)
     fig2, ax2 = plt.subplots()
