@@ -1,6 +1,6 @@
 Employee Attrition Prediction 🚀
 
-App Link:http://localhost:8503/#employee-attrition-prediction
+App Link:https://tasksupervisedlearning-pum7f8zdpqtuksli3kxptz.streamlit.app/
 
 
 This project predicts employee attrition (whether an employee will leave the company or stay) using various machine learning algorithms.
